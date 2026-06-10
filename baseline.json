@@ -1,0 +1,23 @@
+{
+  "price_per_rooftop": 6500,
+  "num_dealers": 20,
+  "dealer_sourced_leads": 0,
+  "lead_conversion_rate": 0.05,
+  "num_inside_leads": 1000,
+  "num_sdrs": 58,
+  "num_field_reps": 618,
+  "levers": {
+    "active_dealer_rate": 0.10,
+    "gp_provided_leads": 100,
+    "sdr_productivity": 0.20,
+    "field_active_rate": 0.50,
+    "rooftops_per_rep": 5.0
+  },
+  "slider_ranges": {
+    "active_dealer_rate": [0, 1, 0.01],
+    "gp_provided_leads": [0, 500, 5],
+    "sdr_productivity": [0, 1, 0.01],
+    "field_active_rate": [0, 1, 0.01],
+    "rooftops_per_rep": [0, 20, 0.5]
+  }
+}
