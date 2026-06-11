@@ -230,7 +230,7 @@ def render_monthly_trend(
         rows.append(
             {
                 "Month": month,
-                "Series": "Plan",
+                "Series": "Baseline",
                 "Rooftops": plan["field"] + plan["inside"] + plan["dealer"],
             }
         )
@@ -305,9 +305,16 @@ def main() -> None:
 
     st.title("Monthly Rooftops Model")
     st.markdown(
+        "Baseline rooftops reflect the actual rooftop numbers for 2026.* "
         "Baselines for active dealer count and dealer sales figures are based off internal "
-        "estimates. Monthly plan rooftops are sourced from the Genius Business Case. "
+        "estimates. Monthly baseline rooftops are sourced from the Genius Business Case. "
         "This model does not account for clients who cancel after signing."
+    )
+    st.markdown(
+        '<p style="color:#808495;font-size:0.875rem;margin-top:0;">'
+        "* For months that have not yet occurred, previously validated projections are used."
+        "</p>",
+        unsafe_allow_html=True,
     )
     st.caption(
         "Adjust levers to see how monthly rooftops change across Field, Inside Sales, "
@@ -326,7 +333,7 @@ def main() -> None:
             "Month",
             MONTHS,
             index=MONTHS.index(baseline.get("default_month", "Apr")),
-            help="Monthly plan baselines come from the Genius Business Case.",
+            help="Monthly baselines come from the Genius Business Case.",
         )
 
         st.markdown(
@@ -423,18 +430,6 @@ def main() -> None:
                 key="lead_conversion_rate",
             ) / 100
 
-        st.divider()
-        st.caption("Edit baseline.json to change plan rooftops, slider defaults, or fixed inputs.")
-        st.subheader("Fixed assumptions")
-        st.markdown(
-            f"""
-            - # field reps: **{baseline['num_field_reps']}**
-            - # SDRs: **{baseline['num_sdrs']}**
-            - Dealer-sourced leads: **{baseline['dealer_sourced_leads']}**
-            - Calibration month: **{baseline.get('calibration_month', 'Apr')}**
-            """
-        )
-
     current_levers = {
         "active_dealers": active_dealers,
         "gp_provided_leads": gp_provided_leads,
@@ -462,8 +457,8 @@ def main() -> None:
         fmt_rooftops(current["total"]),
         delta=fmt_rooftops(rooftop_delta),
     )
-    col2.metric(f"Plan rooftops ({selected_month})", fmt_rooftops(current["plan_total"]))
-    col3.metric("Change vs plan", f"{rooftop_delta_pct:+.1f}%")
+    col2.metric(f"Baseline rooftops ({selected_month})", fmt_rooftops(current["plan_total"]))
+    col3.metric("Change vs baseline", f"{rooftop_delta_pct:+.1f}%")
 
     st.subheader("KPI impact vs baseline")
     st.caption(
@@ -481,7 +476,7 @@ def main() -> None:
     with table_col:
         st.markdown(
             f"""
-            | Channel | Adjusted | Plan |
+            | Channel | Adjusted | Baseline |
             |---|---:|---:|
             | <span style="color:{FIELD_COLOR};font-weight:600;">Field</span> | {current['field']:,.0f} | {current['plan_field']:,.0f} |
             | <span style="color:{INSIDE_COLOR};font-weight:600;">Inside Sales</span> | {current['inside']:,.0f} | {current['plan_inside']:,.0f} |
@@ -506,7 +501,7 @@ def main() -> None:
         )
 
     st.subheader("Full-year monthly trend")
-    st.caption("Plan vs lever-adjusted total rooftops across all three channels.")
+    st.caption("Baseline vs lever-adjusted total rooftops across all three channels.")
     render_monthly_trend(baseline, levers, current_levers)
 
 
