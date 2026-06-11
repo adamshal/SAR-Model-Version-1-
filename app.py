@@ -29,6 +29,16 @@ QUARTERS = {
 QUARTER_ORDER = list(QUARTERS.keys())
 VIEW_MODES = ["Monthly", "Quarterly", "Yearly"]
 MODEL_YEAR = "2026"
+LEVER_KEYS = (
+    "active_dealers",
+    "gp_provided_leads",
+    "total_leads",
+    "mql_to_sql_rate",
+    "sql_close_rate",
+    "field_active_rate",
+    "rooftops_per_rep",
+    "lead_conversion_rate",
+)
 
 
 def load_baseline() -> dict:
@@ -123,6 +133,118 @@ def calc_display_rooftops(
     return display
 
 
+def month_index(month: str) -> int:
+    return MONTHS.index(month)
+
+
+def levers_at_baseline(current_levers: dict, baseline_levers: dict) -> bool:
+    for key in LEVER_KEYS:
+        if abs(float(current_levers[key]) - float(baseline_levers[key])) > 1e-9:
+            return False
+    return True
+
+
+def change_start_month_for_period(view_mode: str, period_key: str) -> str:
+    if view_mode == "Monthly":
+        return period_key
+    if view_mode == "Quarterly":
+        return QUARTERS[period_key][0]
+    return MONTHS[0]
+
+
+def levers_for_month(
+    month: str,
+    baseline_levers: dict,
+    adjusted_levers: dict,
+    change_start_month: str | None,
+) -> dict:
+    if change_start_month is None:
+        return baseline_levers
+    if month_index(month) >= month_index(change_start_month):
+        return adjusted_levers
+    return baseline_levers
+
+
+def calc_display_rooftops_timeline(
+    baseline: dict,
+    month: str,
+    baseline_levers: dict,
+    adjusted_levers: dict,
+    change_start_month: str | None,
+) -> dict[str, float]:
+    month_levers = levers_for_month(month, baseline_levers, adjusted_levers, change_start_month)
+    return calc_display_rooftops(baseline, month, month_levers, baseline_levers)
+
+
+def snapshot_levers(levers: dict) -> tuple:
+    return tuple((key, levers[key]) for key in LEVER_KEYS)
+
+
+def sync_change_start_month(
+    current_levers: dict,
+    baseline_levers: dict,
+    view_mode: str,
+    selected_period: str,
+) -> str | None:
+    snapshot = snapshot_levers(current_levers)
+    last_snapshot = st.session_state.get("_last_lever_snapshot")
+    levers_changed = last_snapshot != snapshot
+
+    if levers_changed:
+        if levers_at_baseline(current_levers, baseline_levers):
+            st.session_state.lever_change_start_month = None
+            st.session_state.pop("adjusted_levers", None)
+        else:
+            st.session_state.lever_change_start_month = change_start_month_for_period(
+                view_mode, selected_period
+            )
+            st.session_state.adjusted_levers = dict(current_levers)
+        st.session_state._last_lever_snapshot = snapshot
+    elif not levers_at_baseline(current_levers, baseline_levers):
+        st.session_state.adjusted_levers = dict(current_levers)
+
+    return st.session_state.get("lever_change_start_month")
+
+
+def levers_from_session_state() -> dict:
+    return {
+        "active_dealers": int(st.session_state.active_dealers),
+        "gp_provided_leads": int(st.session_state.gp_provided_leads),
+        "total_leads": int(st.session_state.total_leads),
+        "mql_to_sql_rate": st.session_state.mql_to_sql_rate / 100,
+        "sql_close_rate": st.session_state.sql_close_rate / 100,
+        "field_active_rate": st.session_state.field_active_rate / 100,
+        "rooftops_per_rep": float(st.session_state.rooftops_per_rep),
+        "lead_conversion_rate": st.session_state.lead_conversion_rate / 100,
+    }
+
+
+def init_period_state(default_month: str) -> None:
+    if "selected_month" not in st.session_state:
+        st.session_state.selected_month = default_month
+    if "selected_quarter" not in st.session_state:
+        st.session_state.selected_quarter = default_quarter_for_month(default_month)
+    if "_prev_view_mode" not in st.session_state:
+        st.session_state._prev_view_mode = "Monthly"
+
+
+def handle_view_mode_transition(view_mode: str) -> None:
+    prev_view = st.session_state.get("_prev_view_mode")
+    if prev_view == view_mode:
+        return
+    if view_mode == "Quarterly":
+        st.session_state.selected_quarter = default_quarter_for_month(
+            st.session_state.selected_month
+        )
+    st.session_state._prev_view_mode = view_mode
+
+
+def active_adjusted_levers(current_levers: dict, baseline_levers: dict) -> dict:
+    if levers_at_baseline(current_levers, baseline_levers):
+        return baseline_levers
+    return st.session_state.get("adjusted_levers", current_levers)
+
+
 def default_quarter_for_month(month: str) -> str:
     for quarter, months in QUARTERS.items():
         if month in months:
@@ -147,18 +269,24 @@ def period_display_label(view_mode: str, period_key: str) -> str:
 def aggregate_display_rooftops(
     baseline: dict,
     months: list[str],
-    current_levers: dict,
     baseline_levers: dict,
+    adjusted_levers: dict,
+    change_start_month: str | None,
 ) -> dict[str, float]:
     totals = {"field": 0.0, "inside": 0.0, "dealer": 0.0}
     plan = {"field": 0.0, "inside": 0.0, "dealer": 0.0}
     for month in months:
-        month_display = calc_display_rooftops(baseline, month, current_levers, baseline_levers)
+        month_display = calc_display_rooftops_timeline(
+            baseline, month, baseline_levers, adjusted_levers, change_start_month
+        )
         for channel in ("field", "inside", "dealer"):
             totals[channel] += month_display[channel]
             plan[channel] += month_display[f"plan_{channel}"]
 
-    formula_current = calc_formula_rooftops(baseline, current_levers)
+    period_levers = levers_for_month(
+        months[-1], baseline_levers, adjusted_levers, change_start_month
+    )
+    formula_current = calc_formula_rooftops(baseline, period_levers)
     return {
         "field": totals["field"],
         "inside": totals["inside"],
@@ -181,23 +309,33 @@ def trend_subheader(view_mode: str) -> str:
     return f"{MODEL_YEAR} quarterly breakdown"
 
 
-def trend_caption(view_mode: str) -> str:
+def trend_caption(view_mode: str, change_start_month: str | None) -> str:
+    timing = (
+        f" Lever changes apply from {change_start_month} onward; earlier months stay at baseline."
+        if change_start_month
+        else ""
+    )
     if view_mode == "Monthly":
-        return "Baseline vs lever-adjusted total rooftops by month."
+        return f"Baseline vs lever-adjusted total rooftops by month.{timing}"
     if view_mode == "Quarterly":
-        return "Baseline vs lever-adjusted total rooftops by quarter."
-    return "Baseline vs lever-adjusted total rooftops by quarter for the full year."
+        return f"Baseline vs lever-adjusted total rooftops by quarter.{timing}"
+    return f"Baseline vs lever-adjusted total rooftops by quarter for the full year.{timing}"
 
 
-def kpi_impact_caption(view_mode: str, period_label: str) -> str:
+def kpi_impact_caption(view_mode: str, period_label: str, change_start_month: str | None) -> str:
     scope = {
         "Monthly": f"{period_label} rooftops",
         "Quarterly": f"{period_label} rooftops (quarter total)",
         "Yearly": f"{period_label} rooftops (annual total)",
     }
+    timing = (
+        f" Changes apply from {change_start_month} onward."
+        if change_start_month
+        else ""
+    )
     return (
         f"Each row shows that lever's change from baseline and its isolated effect on "
-        f"{scope[view_mode]} (holding all other levers at baseline)."
+        f"{scope[view_mode]} (holding all other levers at baseline).{timing}"
     )
 
 
@@ -424,6 +562,7 @@ def compute_kpi_impacts(
     baseline_levers: dict,
     current_levers: dict,
     baseline_total: float,
+    change_start_month: str | None,
 ) -> list[dict]:
     rows = []
     for key, label, kind, channel in LEVER_CONFIG:
@@ -434,7 +573,13 @@ def compute_kpi_impacts(
         isolated_levers = baseline_levers.copy()
         isolated_levers[key] = current_value
         isolated_total = sum(
-            calc_display_rooftops(baseline, month, isolated_levers, baseline_levers)["total"]
+            calc_display_rooftops_timeline(
+                baseline,
+                month,
+                baseline_levers,
+                isolated_levers,
+                change_start_month,
+            )["total"]
             for month in months
         )
         rooftop_effect_pct = (
@@ -491,6 +636,7 @@ def render_period_trend(
     baseline_levers: dict,
     current_levers: dict,
     view_mode: str,
+    change_start_month: str | None,
 ) -> None:
     rows = []
     if view_mode == "Monthly":
@@ -508,7 +654,7 @@ def render_period_trend(
             for month in months
         )
         adjusted_total = aggregate_display_rooftops(
-            baseline, months, current_levers, baseline_levers
+            baseline, months, baseline_levers, current_levers, change_start_month
         )["total"]
         rows.append({"Period": period_label, "Series": "Baseline", "Rooftops": plan_total})
         rows.append({"Period": period_label, "Series": "Adjusted", "Rooftops": adjusted_total})
@@ -555,6 +701,9 @@ def init_slider_state(levers: dict) -> None:
         if key not in st.session_state:
             st.session_state[key] = value
 
+    if "_last_lever_snapshot" not in st.session_state:
+        st.session_state._last_lever_snapshot = snapshot_levers(levers_from_session_state())
+
 
 def reset_to_baseline() -> None:
     levers = get_baseline()["levers"]
@@ -566,6 +715,9 @@ def reset_to_baseline() -> None:
     st.session_state.field_active_rate = levers["field_active_rate"] * 100
     st.session_state.rooftops_per_rep = float(levers["rooftops_per_rep"])
     st.session_state.lead_conversion_rate = levers["lead_conversion_rate"] * 100
+    st.session_state.lever_change_start_month = None
+    st.session_state.pop("adjusted_levers", None)
+    st.session_state.pop("_last_lever_snapshot", None)
 
 
 def main() -> None:
@@ -574,6 +726,9 @@ def main() -> None:
     levers = baseline["levers"]
     ranges = baseline["slider_ranges"]
     init_slider_state(levers)
+
+    default_month = baseline.get("default_month", "Apr")
+    init_period_state(default_month)
 
     st.title("Monthly Rooftops Model")
     st.markdown(
@@ -584,8 +739,8 @@ def main() -> None:
     )
     st.caption(
         "Adjust levers to see how rooftops change across Field, Inside Sales, "
-        "and Dealer channels. Levers are monthly inputs; quarterly and yearly views "
-        "sum monthly results."
+        "and Dealer channels. Levers are monthly inputs; changes apply from the "
+        "selected period forward while earlier months stay at baseline."
     )
 
     if "view_mode" not in st.session_state:
@@ -603,9 +758,7 @@ def main() -> None:
             st.rerun()
 
     view_mode = st.session_state.view_mode
-
-    default_month = baseline.get("default_month", "Apr")
-    default_quarter = default_quarter_for_month(default_month)
+    handle_view_mode_transition(view_mode)
 
     with st.sidebar:
         st.header("Levers")
@@ -620,16 +773,20 @@ def main() -> None:
             selected_period = st.selectbox(
                 "Month",
                 MONTHS,
-                index=MONTHS.index(default_month),
+                index=MONTHS.index(st.session_state.selected_month),
+                key="period_month_select",
                 help="Monthly baselines come from the Genius Business Case.",
             )
+            st.session_state.selected_month = selected_period
         elif view_mode == "Quarterly":
             selected_period = st.selectbox(
                 "Quarter",
                 QUARTER_ORDER,
-                index=QUARTER_ORDER.index(default_quarter),
+                index=QUARTER_ORDER.index(st.session_state.selected_quarter),
+                key="period_quarter_select",
                 help="Quarterly totals sum Jan–Mar, Apr–Jun, Jul–Sep, or Oct–Dec.",
             )
+            st.session_state.selected_quarter = selected_period
         else:
             selected_period = MODEL_YEAR
             st.markdown(f"**Period:** {MODEL_YEAR}")
@@ -728,29 +885,46 @@ def main() -> None:
                 key="lead_conversion_rate",
             ) / 100
 
-        inject_slider_baseline_markers(build_slider_baseline_markers(levers, ranges))
+        current_levers = {
+            "active_dealers": active_dealers,
+            "gp_provided_leads": gp_provided_leads,
+            "total_leads": total_leads,
+            "mql_to_sql_rate": mql_to_sql_rate,
+            "sql_close_rate": sql_close_rate,
+            "field_active_rate": field_active_rate,
+            "rooftops_per_rep": rooftops_per_rep,
+            "lead_conversion_rate": lead_conversion_rate,
+        }
 
-    current_levers = {
-        "active_dealers": active_dealers,
-        "gp_provided_leads": gp_provided_leads,
-        "total_leads": total_leads,
-        "mql_to_sql_rate": mql_to_sql_rate,
-        "sql_close_rate": sql_close_rate,
-        "field_active_rate": field_active_rate,
-        "rooftops_per_rep": rooftops_per_rep,
-        "lead_conversion_rate": lead_conversion_rate,
-    }
+        change_start_month = sync_change_start_month(
+            current_levers, levers, view_mode, selected_period
+        )
+        adjusted_levers = active_adjusted_levers(current_levers, levers)
+        if change_start_month:
+            st.info(
+                f"Lever changes apply from **{change_start_month}** onward. "
+                "Earlier months remain at baseline."
+            )
+
+        inject_slider_baseline_markers(build_slider_baseline_markers(levers, ranges))
 
     months_in_view = period_months(view_mode, selected_period)
     period_label = period_display_label(view_mode, selected_period)
-    current = aggregate_display_rooftops(baseline, months_in_view, current_levers, levers)
+    current = aggregate_display_rooftops(
+        baseline, months_in_view, levers, adjusted_levers, change_start_month
+    )
     rooftop_delta = current["total"] - current["plan_total"]
     rooftop_delta_pct = (
         rooftop_delta / current["plan_total"] * 100 if current["plan_total"] else 0.0
     )
 
     kpi_impacts = compute_kpi_impacts(
-        baseline, months_in_view, levers, current_levers, current["plan_total"]
+        baseline,
+        months_in_view,
+        levers,
+        adjusted_levers,
+        current["plan_total"],
+        change_start_month,
     )
 
     col1, col2, col3 = st.columns(3)
@@ -763,7 +937,7 @@ def main() -> None:
     col3.metric("Change vs baseline", f"{rooftop_delta_pct:+.1f}%")
 
     st.subheader("KPI impact vs baseline")
-    st.caption(kpi_impact_caption(view_mode, period_label))
+    st.caption(kpi_impact_caption(view_mode, period_label, change_start_month))
     st.dataframe(style_kpi_table(kpi_impacts), use_container_width=True, hide_index=True)
 
     st.subheader(f"Rooftops by channel — {period_label}")
@@ -801,8 +975,8 @@ def main() -> None:
         )
 
     st.subheader(trend_subheader(view_mode))
-    st.caption(trend_caption(view_mode))
-    render_period_trend(baseline, levers, current_levers, view_mode)
+    st.caption(trend_caption(view_mode, change_start_month))
+    render_period_trend(baseline, levers, adjusted_levers, view_mode, change_start_month)
 
 
 if __name__ == "__main__":
