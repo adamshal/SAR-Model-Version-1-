@@ -20,6 +20,15 @@ CHANNEL_COLORS = {
     "Dealer": DEALER_COLOR,
 }
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+QUARTERS = {
+    "Q1 2026": ["Jan", "Feb", "Mar"],
+    "Q2 2026": ["Apr", "May", "Jun"],
+    "Q3 2026": ["Jul", "Aug", "Sep"],
+    "Q4 2026": ["Oct", "Nov", "Dec"],
+}
+QUARTER_ORDER = list(QUARTERS.keys())
+VIEW_MODES = ["Monthly", "Quarterly", "Yearly"]
+MODEL_YEAR = "2026"
 
 
 def load_baseline() -> dict:
@@ -112,6 +121,84 @@ def calc_display_rooftops(
     display["plan_dealer"] = plan["dealer"]
     display["plan_total"] = plan["field"] + plan["inside"] + plan["dealer"]
     return display
+
+
+def default_quarter_for_month(month: str) -> str:
+    for quarter, months in QUARTERS.items():
+        if month in months:
+            return quarter
+    return QUARTER_ORDER[0]
+
+
+def period_months(view_mode: str, period_key: str) -> list[str]:
+    if view_mode == "Monthly":
+        return [period_key]
+    if view_mode == "Quarterly":
+        return QUARTERS[period_key]
+    return MONTHS
+
+
+def period_display_label(view_mode: str, period_key: str) -> str:
+    if view_mode == "Yearly":
+        return MODEL_YEAR
+    return period_key
+
+
+def aggregate_display_rooftops(
+    baseline: dict,
+    months: list[str],
+    current_levers: dict,
+    baseline_levers: dict,
+) -> dict[str, float]:
+    totals = {"field": 0.0, "inside": 0.0, "dealer": 0.0}
+    plan = {"field": 0.0, "inside": 0.0, "dealer": 0.0}
+    for month in months:
+        month_display = calc_display_rooftops(baseline, month, current_levers, baseline_levers)
+        for channel in ("field", "inside", "dealer"):
+            totals[channel] += month_display[channel]
+            plan[channel] += month_display[f"plan_{channel}"]
+
+    formula_current = calc_formula_rooftops(baseline, current_levers)
+    return {
+        "field": totals["field"],
+        "inside": totals["inside"],
+        "dealer": totals["dealer"],
+        "total": totals["field"] + totals["inside"] + totals["dealer"],
+        "active_field_reps": formula_current["active_field_reps"],
+        "active_dealers": formula_current["active_dealers"],
+        "plan_field": plan["field"],
+        "plan_inside": plan["inside"],
+        "plan_dealer": plan["dealer"],
+        "plan_total": plan["field"] + plan["inside"] + plan["dealer"],
+    }
+
+
+def trend_subheader(view_mode: str) -> str:
+    if view_mode == "Monthly":
+        return "Full-year monthly trend"
+    if view_mode == "Quarterly":
+        return f"{MODEL_YEAR} quarterly trend"
+    return f"{MODEL_YEAR} quarterly breakdown"
+
+
+def trend_caption(view_mode: str) -> str:
+    if view_mode == "Monthly":
+        return "Baseline vs lever-adjusted total rooftops by month."
+    if view_mode == "Quarterly":
+        return "Baseline vs lever-adjusted total rooftops by quarter."
+    return "Baseline vs lever-adjusted total rooftops by quarter for the full year."
+
+
+def kpi_impact_caption(view_mode: str, period_label: str) -> str:
+    scope = {
+        "Monthly": f"{period_label} rooftops",
+        "Quarterly": f"{period_label} rooftops (quarter total)",
+        "Yearly": f"{period_label} rooftops (annual total)",
+    }
+    return (
+        f"Each row shows that lever's change from baseline and its isolated effect on "
+        f"{scope[view_mode]} (holding all other levers at baseline)."
+    )
 
 
 def fmt_pct(value: float) -> str:
@@ -333,7 +420,7 @@ def format_kpi_pct_change(baseline_value: float, delta: float) -> str:
 
 def compute_kpi_impacts(
     baseline: dict,
-    month: str,
+    months: list[str],
     baseline_levers: dict,
     current_levers: dict,
     baseline_total: float,
@@ -346,9 +433,10 @@ def compute_kpi_impacts(
 
         isolated_levers = baseline_levers.copy()
         isolated_levers[key] = current_value
-        isolated_total = calc_display_rooftops(
-            baseline, month, isolated_levers, baseline_levers
-        )["total"]
+        isolated_total = sum(
+            calc_display_rooftops(baseline, month, isolated_levers, baseline_levers)["total"]
+            for month in months
+        )
         rooftop_effect_pct = (
             (isolated_total - baseline_total) / baseline_total * 100 if baseline_total else 0.0
         )
@@ -398,34 +486,38 @@ def render_rooftops_chart(field: float, inside: float, dealer: float) -> None:
     st.altair_chart(chart, use_container_width=True)
 
 
-def render_monthly_trend(
+def render_period_trend(
     baseline: dict,
     baseline_levers: dict,
     current_levers: dict,
+    view_mode: str,
 ) -> None:
     rows = []
-    for month in MONTHS:
-        plan = baseline["monthly_plan"][month]
-        adjusted = calc_display_rooftops(baseline, month, current_levers, baseline_levers)
-        rows.append(
-            {
-                "Month": month,
-                "Series": "Baseline",
-                "Rooftops": plan["field"] + plan["inside"] + plan["dealer"],
-            }
+    if view_mode == "Monthly":
+        periods = [(month, [month]) for month in MONTHS]
+        x_sort = MONTHS
+    else:
+        periods = [(quarter, months) for quarter, months in QUARTERS.items()]
+        x_sort = QUARTER_ORDER
+
+    for period_label, months in periods:
+        plan_total = sum(
+            baseline["monthly_plan"][month]["field"]
+            + baseline["monthly_plan"][month]["inside"]
+            + baseline["monthly_plan"][month]["dealer"]
+            for month in months
         )
-        rows.append(
-            {
-                "Month": month,
-                "Series": "Adjusted",
-                "Rooftops": adjusted["total"],
-            }
-        )
+        adjusted_total = aggregate_display_rooftops(
+            baseline, months, current_levers, baseline_levers
+        )["total"]
+        rows.append({"Period": period_label, "Series": "Baseline", "Rooftops": plan_total})
+        rows.append({"Period": period_label, "Series": "Adjusted", "Rooftops": adjusted_total})
+
     chart = (
         alt.Chart(pd.DataFrame(rows))
         .mark_line(point=True)
         .encode(
-            x=alt.X("Month:N", sort=MONTHS, title=None),
+            x=alt.X("Period:N", sort=x_sort, title=None),
             y=alt.Y("Rooftops:Q", title="Total rooftops"),
             color=alt.Color("Series:N", title=None),
         )
@@ -485,21 +577,35 @@ def main() -> None:
 
     st.title("Monthly Rooftops Model")
     st.markdown(
-        "Baseline rooftops reflect the actual rooftop numbers for 2026.* "
+        "Baseline rooftops reflect current rooftop goals for 2026. "
         "Baselines for active dealer count and dealer sales figures are based off internal "
         "estimates. Monthly baseline rooftops are sourced from the Genius Business Case. "
         "This model does not account for clients who cancel after signing."
     )
-    st.markdown(
-        '<p style="color:#808495;font-size:0.875rem;margin-top:0;">'
-        "* For months that have not yet occurred, previously validated projections are used."
-        "</p>",
-        unsafe_allow_html=True,
-    )
     st.caption(
-        "Adjust levers to see how monthly rooftops change across Field, Inside Sales, "
-        "and Dealer channels."
+        "Adjust levers to see how rooftops change across Field, Inside Sales, "
+        "and Dealer channels. Levers are monthly inputs; quarterly and yearly views "
+        "sum monthly results."
     )
+
+    if "view_mode" not in st.session_state:
+        st.session_state.view_mode = "Monthly"
+
+    view_cols = st.columns(len(VIEW_MODES))
+    for col, mode in zip(view_cols, VIEW_MODES):
+        if col.button(
+            mode,
+            key=f"view_btn_{mode}",
+            use_container_width=True,
+            type="primary" if st.session_state.view_mode == mode else "secondary",
+        ):
+            st.session_state.view_mode = mode
+            st.rerun()
+
+    view_mode = st.session_state.view_mode
+
+    default_month = baseline.get("default_month", "Apr")
+    default_quarter = default_quarter_for_month(default_month)
 
     with st.sidebar:
         st.header("Levers")
@@ -510,12 +616,23 @@ def main() -> None:
             on_click=reset_to_baseline,
         )
 
-        selected_month = st.selectbox(
-            "Month",
-            MONTHS,
-            index=MONTHS.index(baseline.get("default_month", "Apr")),
-            help="Monthly baselines come from the Genius Business Case.",
-        )
+        if view_mode == "Monthly":
+            selected_period = st.selectbox(
+                "Month",
+                MONTHS,
+                index=MONTHS.index(default_month),
+                help="Monthly baselines come from the Genius Business Case.",
+            )
+        elif view_mode == "Quarterly":
+            selected_period = st.selectbox(
+                "Quarter",
+                QUARTER_ORDER,
+                index=QUARTER_ORDER.index(default_quarter),
+                help="Quarterly totals sum Jan–Mar, Apr–Jun, Jul–Sep, or Oct–Dec.",
+            )
+        else:
+            selected_period = MODEL_YEAR
+            st.markdown(f"**Period:** {MODEL_YEAR}")
 
         st.markdown(
             f"""
@@ -624,33 +741,32 @@ def main() -> None:
         "lead_conversion_rate": lead_conversion_rate,
     }
 
-    current = calc_display_rooftops(baseline, selected_month, current_levers, levers)
+    months_in_view = period_months(view_mode, selected_period)
+    period_label = period_display_label(view_mode, selected_period)
+    current = aggregate_display_rooftops(baseline, months_in_view, current_levers, levers)
     rooftop_delta = current["total"] - current["plan_total"]
     rooftop_delta_pct = (
         rooftop_delta / current["plan_total"] * 100 if current["plan_total"] else 0.0
     )
 
     kpi_impacts = compute_kpi_impacts(
-        baseline, selected_month, levers, current_levers, current["plan_total"]
+        baseline, months_in_view, levers, current_levers, current["plan_total"]
     )
 
     col1, col2, col3 = st.columns(3)
     col1.metric(
-        f"Adjusted rooftops ({selected_month})",
+        f"Adjusted rooftops ({period_label})",
         fmt_rooftops(current["total"]),
         delta=fmt_rooftops(rooftop_delta),
     )
-    col2.metric(f"Baseline rooftops ({selected_month})", fmt_rooftops(current["plan_total"]))
+    col2.metric(f"Baseline rooftops ({period_label})", fmt_rooftops(current["plan_total"]))
     col3.metric("Change vs baseline", f"{rooftop_delta_pct:+.1f}%")
 
     st.subheader("KPI impact vs baseline")
-    st.caption(
-        f"Each row shows that lever's change from baseline and its isolated effect on "
-        f"{selected_month} rooftops (holding all other levers at baseline)."
-    )
+    st.caption(kpi_impact_caption(view_mode, period_label))
     st.dataframe(style_kpi_table(kpi_impacts), use_container_width=True, hide_index=True)
 
-    st.subheader(f"Rooftops by channel — {selected_month}")
+    st.subheader(f"Rooftops by channel — {period_label}")
     chart_col, table_col = st.columns([2, 1])
 
     with chart_col:
@@ -678,14 +794,15 @@ def main() -> None:
         )
         st.caption(
             f"Dealer: {current['active_dealers']:,.0f} active dealers × "
-            f"{current['dealer'] / current['active_dealers']:,.1f} rooftops per dealer"
+            f"{current['dealer'] / current['active_dealers']:,.1f} rooftops per dealer "
+            f"({view_mode.lower()} total)"
             if current["active_dealers"]
             else "Dealer: 0 active dealers"
         )
 
-    st.subheader("Full-year monthly trend")
-    st.caption("Baseline vs lever-adjusted total rooftops across all three channels.")
-    render_monthly_trend(baseline, levers, current_levers)
+    st.subheader(trend_subheader(view_mode))
+    st.caption(trend_caption(view_mode))
+    render_period_trend(baseline, levers, current_levers, view_mode)
 
 
 if __name__ == "__main__":
