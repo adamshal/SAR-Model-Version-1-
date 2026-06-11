@@ -1,23 +1,43 @@
 {
-  "price_per_rooftop": 6500,
+  "source": "Genius Business Case (Revision/Preliminary) — Field, Inside, and Dealer streams aggregated",
+  "calibration_month": "Apr",
+  "default_month": "Apr",
   "num_dealers": 20,
   "dealer_sourced_leads": 0,
-  "lead_conversion_rate": 0.05,
-  "num_inside_leads": 1000,
   "num_sdrs": 58,
   "num_field_reps": 618,
+  "monthly_plan": {
+    "Jan": {"field": 295, "inside": 229, "dealer": 289},
+    "Feb": {"field": 376, "inside": 314, "dealer": 270},
+    "Mar": {"field": 399, "inside": 312, "dealer": 388},
+    "Apr": {"field": 505, "inside": 316, "dealer": 318},
+    "May": {"field": 465, "inside": 311, "dealer": 352},
+    "Jun": {"field": 663, "inside": 317, "dealer": 363},
+    "Jul": {"field": 610, "inside": 397, "dealer": 388},
+    "Aug": {"field": 622, "inside": 371, "dealer": 387},
+    "Sep": {"field": 681, "inside": 418, "dealer": 397},
+    "Oct": {"field": 684, "inside": 436, "dealer": 402},
+    "Nov": {"field": 810, "inside": 441, "dealer": 443},
+    "Dec": {"field": 825, "inside": 470, "dealer": 464}
+  },
   "levers": {
     "active_dealers": 120,
     "gp_provided_leads": 500,
-    "sdr_productivity": 0.20,
+    "total_leads": 12640,
+    "mql_to_sql_rate": 0.25,
+    "sql_close_rate": 0.10,
     "field_active_rate": 0.50,
-    "rooftops_per_rep": 5.0
+    "rooftops_per_rep": 1.63,
+    "lead_conversion_rate": 0.0053
   },
   "slider_ranges": {
     "active_dealers": [0, 300, 5],
-    "gp_provided_leads": [0, 1000, 5],
-    "sdr_productivity": [0, 1, 0.01],
+    "gp_provided_leads": [0, 2000, 10],
+    "total_leads": [0, 50000, 250],
+    "mql_to_sql_rate": [0, 1, 0.01],
+    "sql_close_rate": [0, 1, 0.01],
     "field_active_rate": [0, 1, 0.01],
-    "rooftops_per_rep": [0, 20, 0.5]
+    "rooftops_per_rep": [0, 5, 0.05],
+    "lead_conversion_rate": [0, 0.05, 0.0005]
   }
 }
