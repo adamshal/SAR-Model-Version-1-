@@ -4,6 +4,7 @@ from pathlib import Path
 import altair as alt
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 BASELINE_PATH = Path(__file__).parent / "baseline.json"
 
@@ -123,6 +124,185 @@ def fmt_delta_pct(value: float) -> str:
 
 def fmt_rooftops(value: float) -> str:
     return f"{value:,.0f}"
+
+
+def slider_baseline_pct(min_val: float, max_val: float, baseline_val: float) -> float:
+    if max_val <= min_val:
+        return 0.0
+    pct = (baseline_val - min_val) / (max_val - min_val) * 100.0
+    return max(0.0, min(100.0, pct))
+
+
+def build_slider_baseline_markers(levers: dict, ranges: dict) -> dict[str, float]:
+    return {
+        "field_active_rate": slider_baseline_pct(
+            ranges["field_active_rate"][0] * 100,
+            ranges["field_active_rate"][1] * 100,
+            levers["field_active_rate"] * 100,
+        ),
+        "rooftops_per_rep": slider_baseline_pct(
+            ranges["rooftops_per_rep"][0],
+            ranges["rooftops_per_rep"][1],
+            levers["rooftops_per_rep"],
+        ),
+        "total_leads": slider_baseline_pct(
+            ranges["total_leads"][0],
+            ranges["total_leads"][1],
+            levers["total_leads"],
+        ),
+        "mql_to_sql_rate": slider_baseline_pct(
+            ranges["mql_to_sql_rate"][0] * 100,
+            ranges["mql_to_sql_rate"][1] * 100,
+            levers["mql_to_sql_rate"] * 100,
+        ),
+        "sql_close_rate": slider_baseline_pct(
+            ranges["sql_close_rate"][0] * 100,
+            ranges["sql_close_rate"][1] * 100,
+            levers["sql_close_rate"] * 100,
+        ),
+        "gp_provided_leads": slider_baseline_pct(
+            ranges["gp_provided_leads"][0],
+            ranges["gp_provided_leads"][1],
+            levers["gp_provided_leads"],
+        ),
+        "active_dealers": slider_baseline_pct(
+            ranges["active_dealers"][0],
+            ranges["active_dealers"][1],
+            levers["active_dealers"],
+        ),
+        "lead_conversion_rate": slider_baseline_pct(
+            ranges["lead_conversion_rate"][0] * 100,
+            ranges["lead_conversion_rate"][1] * 100,
+            levers["lead_conversion_rate"] * 100,
+        ),
+    }
+
+
+def inject_slider_baseline_markers(markers: dict[str, float]) -> None:
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            const markers = {json.dumps(markers)};
+            const doc = window.parent.document;
+
+            function injectStyles() {{
+                if (doc.getElementById("slider-baseline-styles")) return;
+                const style = doc.createElement("style");
+                style.id = "slider-baseline-styles";
+                style.textContent = `
+                    section[data-testid="stSidebar"] div[data-baseweb="slider"] {{
+                        position: relative !important;
+                        min-height: 28px;
+                    }}
+                    section[data-testid="stSidebar"] div[data-baseweb="slider"] > div:not([role="slider"]) {{
+                        height: 12px !important;
+                        border-radius: 6px !important;
+                    }}
+                    section[data-testid="stSidebar"] div[data-baseweb="slider"] > div[role="slider"],
+                    section[data-testid="stSidebar"] div[data-baseweb="slider"] [data-baseweb="thumb"] {{
+                        width: 22px !important;
+                        height: 22px !important;
+                    }}
+                    section[data-testid="stSidebar"] .slider-baseline-marker {{
+                        position: absolute;
+                        width: 2px;
+                        height: 24px;
+                        background: rgba(38, 39, 48, 0.55);
+                        border-radius: 1px;
+                        pointer-events: none;
+                        z-index: 3;
+                        transform: translateX(-50%);
+                    }}
+                `;
+                doc.head.appendChild(style);
+            }}
+
+            function markerLeftAtPct(sliderEl, pct) {{
+                const thumb =
+                    sliderEl.querySelector('[role="slider"]') ||
+                    sliderEl.querySelector('[data-baseweb="thumb"]');
+                const sliderRect = sliderEl.getBoundingClientRect();
+                const sliderWidth = sliderRect.width;
+                if (!thumb || sliderWidth <= 0) {{
+                    return (pct / 100) * sliderWidth;
+                }}
+
+                const thumbRect = thumb.getBoundingClientRect();
+                const thumbWidth = thumbRect.width || 20;
+                const usable = Math.max(0, sliderWidth - thumbWidth);
+                const theoretical = (thumbWidth / 2) + (pct / 100) * usable;
+
+                const min = parseFloat(thumb.getAttribute("aria-valuemin"));
+                const max = parseFloat(thumb.getAttribute("aria-valuemax"));
+                const now = parseFloat(thumb.getAttribute("aria-valuenow"));
+                if (Number.isFinite(min) && Number.isFinite(max) && max > min && Number.isFinite(now)) {{
+                    const currentFraction = (now - min) / (max - min);
+                    const currentCenter =
+                        thumbRect.left + thumbRect.width / 2 - sliderRect.left;
+                    const expectedCurrent =
+                        (thumbWidth / 2) + currentFraction * usable;
+                    const offset = currentCenter - expectedCurrent;
+                    return theoretical + offset;
+                }}
+
+                return theoretical;
+            }}
+
+            function ensureMarker(sliderEl, pct) {{
+                const thumb =
+                    sliderEl.querySelector('[role="slider"]') ||
+                    sliderEl.querySelector('[data-baseweb="thumb"]');
+                const sliderRect = sliderEl.getBoundingClientRect();
+
+                let marker = sliderEl.querySelector(".slider-baseline-marker");
+                if (!marker) {{
+                    marker = doc.createElement("div");
+                    marker.className = "slider-baseline-marker";
+                    sliderEl.appendChild(marker);
+                }}
+                marker.style.left = markerLeftAtPct(sliderEl, pct) + "px";
+                if (thumb) {{
+                    const thumbRect = thumb.getBoundingClientRect();
+                    marker.style.top =
+                        thumbRect.top + thumbRect.height / 2 - sliderRect.top + "px";
+                }} else {{
+                    marker.style.top = "50%";
+                    marker.style.transform = "translate(-50%, -50%)";
+                }}
+            }}
+
+            function apply() {{
+                injectStyles();
+                for (const [key, pct] of Object.entries(markers)) {{
+                    const root = doc.querySelector(".st-key-" + key);
+                    if (!root) continue;
+                    const sliderEl = root.querySelector('[data-testid="stSlider"] div[data-baseweb="slider"]');
+                    if (!sliderEl) continue;
+                    ensureMarker(sliderEl, pct);
+                }}
+            }}
+
+            apply();
+            let scheduled = false;
+            const observer = new MutationObserver(function() {{
+                if (scheduled) return;
+                scheduled = true;
+                requestAnimationFrame(function() {{
+                    scheduled = false;
+                    apply();
+                }});
+            }});
+            observer.observe(doc.body, {{ childList: true, subtree: true }});
+            window.addEventListener("resize", apply);
+            setTimeout(apply, 100);
+            setTimeout(apply, 500);
+        }})();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 LEVER_CONFIG = [
@@ -323,6 +503,7 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Levers")
+        st.caption("Vertical line on each slider marks the baseline value.")
         st.button(
             "Reset to baseline",
             use_container_width=True,
@@ -429,6 +610,8 @@ def main() -> None:
                 help="Share of dealer leads that convert to rooftops each month.",
                 key="lead_conversion_rate",
             ) / 100
+
+        inject_slider_baseline_markers(build_slider_baseline_markers(levers, ranges))
 
     current_levers = {
         "active_dealers": active_dealers,
